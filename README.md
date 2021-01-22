@@ -1,4 +1,4 @@
-# Haskell_Project
+# Nano-language
 
 This is a class project were I used Haskell to create a basic language
 that does lambda calculus computation and operator operations.
