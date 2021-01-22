@@ -7,7 +7,15 @@ This project also highlights fundamentals like polymorphism and inheritance.
 
 ### Overview
 
-The overall objective of this project is to get some experience 
+The overall objective of this project is to fully understand the notions of:
+
+* lexing,
+* parsing,
+* scoping,
+* binding,
+* environments and closures,
+
+and get some experience 
 with different *type-classes*, in particular to learn about:
 
 * Property-based testing, and
@@ -36,6 +44,547 @@ OVERALL SCORE = ... / ...
 ```
 
 # Features
+
+## Data Structures
+
+Build an interpreter
+for a subset of Haskell called *Nano*. The following
+data types (in `Types.hs`) are used to represent the
+different elements of the language.
+
+### Binary Operators
+
+Nano uses the following **binary** operators encoded
+within the interpreter as values of type `Binop`.
+
+```haskell
+data Binop
+  = Plus
+  | Minus
+  | Mul
+  | Div
+  | Eq
+  | Ne
+  | Lt
+  | Le
+  | And
+  | Or
+  | Cons
+```
+
+### Expressions
+
+All Nano programs correspond to **expressions**
+each of which will be represented within your
+interpreter by Haskell values of type `Expr`.
+
+```haskell
+data Expr
+  = EInt  Int
+  | EBool Bool
+  | ENil
+  | EVar Id
+  | EBin Binop Expr Expr
+  | EIf  Expr Expr  Expr
+  | ELet Id   Expr  Expr
+  | EApp Expr Expr
+  | ELam Id   Expr
+  deriving (Eq)
+```
+
+where `Id` is just a type alias for `String` used to represent
+variable names:
+
+```haskell
+type Id = String
+```
+
+The following lists some Nano expressions,
+and the value of type `Expr` used to represent
+the expression inside your interpreter.
+
+1. Let-bindings
+
+```haskell
+let x = 3 in x + x
+```
+
+is represented by
+
+```haskell
+ELet "x" (EInt 3)
+  (EBin Plus (EVar "x") (EVar "x"))
+```
+
+2. Anonymous Functions definitions
+
+```haskell
+\x -> x + 1
+```
+
+is represented by
+
+```haskell
+ELam "x" (EBin Plus (EVar "x") (EInt 1))
+```
+
+3. Function applications ("calls")
+
+```haskell
+f x
+```
+
+is represented by
+
+```haskell
+EApp (EVar "f") (EVar "x")
+```
+
+4. (Recursive) Named Functions
+
+```haskell
+let f = \ x -> f x in
+  f 5
+```
+
+is represented by
+
+```haskell
+ELet "f" (ELam "x" (EApp (EVar "f") (EVar "x")))
+  (EApp (EVar "f") (EInt 5))
+```
+
+
+### Values
+
+```haskell
+data Value
+  = VInt  Int
+  | VBool Bool
+  | VClos Env Id Expr
+  | VNil
+  | VCons Value Value
+  | VPrim (Value -> Value)
+```
+
+where an `Env` is simply a dictionary: a list of pairs
+of variable names and the values they are bound to:
+
+```haskell
+type Env = [(Id, Value)]
+```
+
+- `VClos env "x" e` represents a function with argument `"x"`
+   and body-expression `e` that was defined in an environment
+   `env`.
+   
+## Nano Interpreter
+
+```haskell
+data Binop = Plus | Minus | Mul
+
+data Expr  = EInt Int
+           | EVar Id
+           | EBin Binop Expr Expr
+
+data Value = VInt Int
+```
+
+That is,
+
+- An *expression* is either an `Int` constant,
+  a variable, or a binary operator applied
+  to two sub-expressions.
+
+- A *value* is an integer, and an *environment*
+  is a list of pairs of variable names and values.
+
+```haskell
+lookupId :: Id -> Env -> Value
+```
+
+where `lookupId x env` returns the most recent
+binding for the variable `x` (i.e. the first from the left)
+in the list representing the environment.
+If no such value is found, you should throw an error:
+
+```haskell
+throw (Error ("unbound variable: " ++ x))
+
+Should get the following behavior:
+
+```haskell
+>>> lookupId "z1" env0
+0
+
+>>> lookupId "x" env0
+1
+
+>>> lookupId "y" env0
+2
+
+>>> lookupId "mickey" env0
+*** Exception: Error {errMsg = "unbound variable: mickey"}
+```
+
+```haskell
+eval :: Env -> Expr -> Value
+```
+
+such that `eval env e` evaluates the Nano
+expression `e` in the environment `env`
+(i.e. uses `env` for the values of the
+**free variables** in `e`), and throws
+an `Error "unbound variable"` if the
+expression contains a free variable
+that is **not bound** in `env`.
+
+Should get the following behavior:
+
+```haskell
+>>> eval env0 (EBin Minus (EBin Plus (EVar "x") (EVar "y")) (EBin Plus (EVar "z") (EVar "z1")))
+0
+
+>>> eval env0 (EVar "p")
+*** Exception: Error {errMsg = "unbound variable: p"}
+```
+
+binary operators
+
+```haskell
+data Binop = ...
+           | Eq | Ne | Lt | Le | And | Or
+```
+
+This will require using the new value type `Bool`
+
+```haskell
+data Value = ...
+           | VBool Bool
+```
+
+* The operators `Eq` and `Ne` should work if both operands
+  are `VInt` values, or if both operands are `VBool` values.
+
+* The operators `Lt` and `Le` are only defined for `VInt`
+  values, and `&&` and `||` are only defined for `VBool`
+  values.
+
+* Other pairs of arguments are **invalid**
+
+Should see the following behavior
+
+```haskell
+>>> eval []  (EBin Le (EInt 2) (EInt 3))
+True
+
+>>> eval []  (EBin Eq (EInt 2) (EInt 3))
+False
+
+>>> eval []  (EBin Lt (EInt 2) (EBool True))
+*** Exception: Error {errMsg = "type error: binop"}
+```
+
+`EIf p t f` expressions.
+
+1. First, evaluate the `p`; if `p` does not evaluate to a
+   `VBool` value, then your evaluator should
+   `throw (Error "type error")`,
+
+2. If `p` evaluates to the true value then the expression
+   `t` should be evaluated and returned as the value of
+   the entire `If` expression,
+
+3. Instead, if `p` evaluates to the false value, then `f`
+   should be evaluated and that result should be returned.
+
+Should get the following behavior:
+
+```haskell
+>>> let e1 = EIf (EBin Lt (EVar "z1") (EVar "x")) (EBin Ne (EVar "y") (EVar "z")) (EBool False)
+>>> eval env0 e1
+True
+
+>>> let e2 = EIf (EBin Eq (EVar "z1") (EVar "x")) (EBin Le (EVar "y") (EVar "z")) (EBin Le (EVar "z") (EVar "y"))
+>>> eval env0 e2
+False
+```
+
+
+The *let-in* expressions which introduce local bindings.
+
+```haskell
+data Expr
+  = ...
+  | ELet Id   Expr  Expr
+```
+
+The expression `ELet x e1 e2` should be evaluated
+as the Haskell expression `let x = e1 in e2`.
+
+
+Should get the following behavior:
+
+```haskell
+>>> let e1 = EBin Plus (EVar "x")  (EVar "y")
+>>> let e2 = ELet "x" (EInt 1) (ELet "y" (EInt 2) e1)
+>>> eval [] e2
+3
+```
+
+Evaluator includes the expressions
+corresponding to function definitions and applications.
+
+```haskell
+data Expr
+  = ...
+	| ELam Id   Expr
+	| EApp Expr Expr
+```
+
+In the above,
+
+* `ELam x e` corresponds to the function defined `\x -> e`, and
+
+* `EApp e1 e2` corresponds to the Haskell expression `e1 e2`
+   (i.e. applying the argument `e2` to the function `e1`).
+   
+```haskell
+data Value
+  = ...
+	| VClos Env Id Expr
+```
+
+Functions do have values represented by
+the `VClos env x e` where
+
+* `env` is the environment at the point where
+   that function was declared,
+* `x` is the formal parameter, and
+* `e` the body expression of the function.
+
+Eval has the function:
+
+```haskell
+>>> eval [] (EApp (ELam "x" (EBin Plus (EVar "x") (EVar "x"))) (EInt 3))
+6
+
+>>> let e3 = ELet "h" (ELam "y" (EBin Plus (EVar "x") (EVar "y"))) (EApp (EVar "f") (EVar "h"))
+>>> let e2 = ELet "x" (EInt 100) e3
+>>> let e1 = ELet "f" (ELam "g" (ELet "x" (EInt 0) (EApp (EVar "g") (EInt 2)))) e2
+>>> eval [] e1
+102
+```
+
+
+```haskell
+-- >>> :{
+-- eval [] (ELet "fac" (ELam "n" (EIf (EBin Eq (EVar "n") (EInt 0))
+--                                  (EInt 1)
+--                                  (EBin Mul (EVar "n") (EApp (EVar "fac") (EBin Minus (EVar "n") (EInt 1))))))
+--             (EApp (EVar "fac") (EInt 10)))
+-- :}
+-- 3628800
+```
+
+Program support operations on lists.
+
+```haskell
+data Binop = ...
+           | Cons
+
+data Expr = ...
+          | ENil
+
+data Value = ...
+           | VNil
+           | VCons Value Value
+```
+
+```haskell
+>>> let el = EBin Cons (EInt 1) (EBin Cons (EInt 2) ENil)
+
+>>> execExpr el
+(1 : (2 : []))
+
+>>> execExpr (EApp (EVar "head") el)
+1
+
+>>> execExpr (EApp (EVar "tail") el)
+(2 : [])
+```
+
+
+## Nano Lexer (Lexer.x) and Parser (Parser.y)
+
+```haskell
+>>> parseTokens "True"
+Right [TRUE (AlexPn 0 1 1)]
+
+>>> parseTokens "True False 12345 foo bar baz"
+Right [TRUE (AlexPn 0 1 1),FALSE (AlexPn 5 1 6),NUM (AlexPn 11 1 12) 12345,ID (AlexPn 17 1 18) "foo",ID (AlexPn 21 1 22) "bar",ID (AlexPn 25 1 26) "baz"]
+```
+
+The `AlexPn n l c` denote the **position**
+in the string where the token was parsed.
+For example, the `FALSE` is at character
+`5`, line `1` and column `6`.
+
+```haskell
+>>> parse "True"
+EBool True
+
+>>> parse "False"
+EBool False
+
+>>> parse "123"
+EInt 123
+
+>>> parse "foo"
+EVar "foo"
+```
+
+Tokens to the lexer and parser.
+
+| String  | Token   |
+|:--------|:--------|
+| `let`   | `LET`   |
+| `=`     | `EQB`   |
+| `\`     | `LAM`   |
+| `->`    | `ARROW` |
+| `if`    | `IF`    |
+| `then`  | `THEN`  |
+| `else`  | `ELSE`  |
+
+
+```haskell
+>>> parseTokens "let foo = \\x -> if y then z else w in foo"
+
+Right [LET (AlexPn 0 1 1),ID (AlexPn 4 1 5) "foo",EQB (AlexPn 8 1 9),
+       LAM (AlexPn 10 1 11),ID (AlexPn 11 1 12) "x",ARROW (AlexPn 13 1 14),
+       IF (AlexPn 16 1 17),ID (AlexPn 19 1 20) "y",THEN (AlexPn 21 1 22),
+       ID (AlexPn 26 1 27) "z",ELSE (AlexPn 28 1 29),ID (AlexPn 33 1 34) "w",
+       IN (AlexPn 35 1 36),ID (AlexPn 38 1 39) "foo"]
+
+>>> parse "let foo = \\x -> if y then z else w in foo"
+ELet "foo" (ELam "x" (EIf (EVar "y") (EVar "z") (EVar "w"))) (EVar "foo")
+
+>>> parse "let foo x = if y then z else w in foo"
+ELet "foo" (ELam "x" (EIf (EVar "y") (EVar "z") (EVar "w"))) (EVar "foo")
+```
+
+Tokens to the lexer and parser.
+
+| String  | Token   |
+|:--------|:--------|
+| `+`     | `PLUS`  |
+| `-`     | `MINUS` |
+| `*`     | `MUL`   |
+| `<`     | `LESS`  |
+| `<=`    | `LEQ`   |
+| `==`    | `EQL`   |
+| `/=`    | `NEQ`   |
+| `\|\|`  | `OR`    |
+
+```haskell
+>>> parseTokens "+ - * || < <= = && /="
+Right [PLUS (AlexPn 0 1 1),MINUS (AlexPn 2 1 3),
+       MUL (AlexPn 4 1 5),OR (AlexPn 6 1 7),
+       LESS (AlexPn 9 1 10),LEQ (AlexPn 11 1 12),
+       EQB (AlexPn 14 1 15),AND (AlexPn 16 1 17),
+       NEQ (AlexPn 19 1 20)]
+
+>>> parse "x + y"
+EBin Plus (EVar "x") (EVar "y")
+
+>>> parse "if x <= 4 then a || b else a && b"
+EIf (EBin Le (EVar "x") (EInt 4)) (EBin Or (EVar "a") (EVar "b")) (EBin And (EVar "a") (EVar "b"))
+
+>>> parse "if 4 <= z then 1 - z else 4 * z"
+EIf (EBin Le (EInt 4) (EVar "z")) (EBin Minus (EInt 1) (EVar "z")) (EBin Mul (EInt 4) (EVar "z"))
+
+>>> parse "let a = 6 * 2 in a /= 11"
+ELet "a" (EBin Mul (EInt 6) (EInt 2)) (EBin Ne (EVar "a") (EInt 11))
+```
+
+```haskell
+>>> parseTokens "() (  )"
+Right [LPAREN (AlexPn 0 1 1),RPAREN (AlexPn 1 1 2),LPAREN (AlexPn 3 1 4),RPAREN (AlexPn 6 1 7)]
+
+>>> parse "f x"
+EApp (EVar "f") (EVar "x")
+
+>>> parse "(\\ x -> x + x) (3 * 3)"
+EApp (ELam "x" (EBin Plus (EVar "x") (EVar "x"))) (EBin Mul (EInt 3) (EInt 3))
+
+>>> parse "(((add3 (x)) y) z)"
+EApp (EApp (EApp (EVar "add3") (EVar "x")) (EVar "y")) (EVar "z")
+
+>>> parse <$> readFile "tests/input/t1.hs"
+EBin Mul (EBin Plus (EInt 2) (EInt 3)) (EBin Plus (EInt 4) (EInt 5))
+
+>>> parse <$> readFile "tests/input/t2.hs"
+ELet "z" (EInt 3) (ELet "y" (EInt 2) (ELet "x" (EInt 1) (ELet "z1" (EInt 0) (EBin Minus (EBin Plus (EVar "x") (EVar "y")) (EBin Plus (EVar "z") (EVar "z1"))))))
+
+```
+
+
+**Operators Precedence Order**
+
++ (Highest) Fun Application
++ `*`
++ `+`, `-`
++ `==`, `/=`, `<`, `<=`
++ `&&`
++ `||`
++ `->`
++ (Lowest) `=`, `if`, `then`, `else`, `in`
+
+**Precedence** Function application having higher precedence than
+multiplications, and multiplication higher than addition,
+so `"1+f x*3"` should be parsed as if it were
+`"1+((f x)*3)"`.
+
+**Associativity** All arithmetic and logical operators, as well as function application are *left associative*,
+so `"1-2-3-4"` should be parsed as `"((1-2)-3)-4"`, 
+and `"f x y z"` should be parsed as `"((f x) y) z"`.
+
+The following behavior:
+
+```haskell
+>>> parse "1-2-3"
+EBin Minus (EBin Minus (EInt 1) (EInt 2)) (EInt 3)
+>>> parse "1+a&&b||c+d*e-f-g x"
+EBin Or (EBin And (EBin Plus (EInt 1) (EVar "a")) (EVar "b")) (EBin Minus (EBin Minus (EBin Plus (EVar "c") (EBin Mul (EVar "d") (EVar "e"))) (EVar "f")) (EApp (EVar "g") (EVar "x")))
+```
+
+Tokens to the lexer
+
+
+| String | Token   |
+|:-------|:--------|
+| `[`    | `LBRAC` |
+| `]`    | `RBRAC` |
+
+Rules to your parser to support parsing lists.
+`"[a,b,c]"` should be parsed as if it were
+`"((a):(b):(c):[])"`. The `:` operator should
+have higher priority than the comparison
+functions (`==`, `<=` etc.), and lower priority
+than `+` and `-`.
+In addition, `:` should be right associative.  `"[]"`
+should be parsed as `ENil`, and `:` should be treated
+as any other binary operator.
+
+The following behavior
+
+```haskell
+>>> parse "1:3:5:[]"
+EBin Cons (EInt 1) (EBin Cons (EInt 3) (EBin Cons (EInt 5) ENil))
+
+>>> parse "[1,3,5]"
+EBin Cons (EInt 1) (EBin Cons (EInt 3) (EBin Cons (EInt 5) ENil))
+```
 
 ## Sets via Binary Search Trees
 
